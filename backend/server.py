@@ -15,6 +15,7 @@ import jwt
 import json
 import secrets
 import string
+import re
 
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / '.env')
@@ -67,6 +68,7 @@ manager = ConnectionManager()
 # Models
 class User(BaseModel):
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    phone: str
     name: str
     user_type: str  # "driver" or "passenger"
     password_hash: str
@@ -97,12 +99,34 @@ class PassengerCreate(BaseModel):
         return v
 
 class DriverCreate(BaseModel):
+    phone: str  # رقم الهاتف الفعلي للسائق
     name: str  # الاسم الثلاثي
     car_registration_number: str
     operating_number: str
     taxi_office_name: str
     taxi_office_phone: str
     password: str
+    activation_code: str  # كود التفعيل مطلوب عند التسجيل
+    
+    @validator('phone')
+    def validate_phone(cls, v):
+        # التحقق من صيغة رقم الهاتف السعودي
+        if not re.match(r'^05\d{8}$', v):
+            raise ValueError('رقم الهاتف يجب أن يبدأ بـ 05 ويتكون من 10 أرقام')
+        return v
+    
+    @validator('activation_code')
+    def validate_activation_code(cls, v):
+        # التحقق من صيغة كود التفعيل: 05 + 5 أرقام من 00001 إلى 99999
+        if not re.match(r'^05\d{5}$', v):
+            raise ValueError('كود التفعيل يجب أن يبدأ بـ 05 ويتكون من 10 أرقام')
+        
+        # التحقق من أن الأرقام الـ5 الأخيرة في النطاق الصحيح
+        last_five = v[2:]  # آخر 5 أرقام
+        if not (1 <= int(last_five) <= 99999):
+            raise ValueError('كود التفعيل غير صحيح')
+        
+        return v
 
 class UserLogin(BaseModel):
     phone: str
@@ -110,6 +134,7 @@ class UserLogin(BaseModel):
 
 class UserResponse(BaseModel):
     id: str
+    phone: str
     name: str
     user_type: str
     is_active: bool
@@ -124,7 +149,7 @@ class UserResponse(BaseModel):
 class ActivationCode(BaseModel):
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     code: str
-    driver_id: Optional[str] = None
+    driver_phone: Optional[str] = None  # رقم هاتف السائق الذي استخدم الكود
     is_used: bool = False
     expires_at: datetime
     created_at: datetime = Field(default_factory=datetime.utcnow)
@@ -162,9 +187,6 @@ class RideRequestCreate(BaseModel):
     passenger_count: int = 1
     has_luggage: bool = False
 
-class ActivateDriverRequest(BaseModel):
-    activation_code: str
-
 # Helper Functions
 def create_access_token(data: dict, expires_delta: Optional[timedelta] = None):
     to_encode = data.copy()
@@ -183,8 +205,26 @@ def verify_password(plain_password: str, hashed_password: str) -> bool:
     return bcrypt.checkpw(plain_password.encode('utf-8'), hashed_password.encode('utf-8'))
 
 def generate_activation_code() -> str:
-    """Generate unique 8-character activation code"""
-    return ''.join(secrets.choice(string.ascii_uppercase + string.digits) for _ in range(8))
+    """Generate activation code in format: 05XXXXX where XXXXX is 00001-99999"""
+    # Get the highest used number
+    import asyncio
+    
+    async def get_next_number():
+        # Find the highest used code
+        codes = await db.activation_codes.find().sort("code", -1).to_list(1)
+        if not codes:
+            return 1
+        
+        last_code = codes[0]["code"]
+        if last_code.startswith("05"):
+            last_number = int(last_code[2:])
+            return min(last_number + 1, 99999)
+        return 1
+    
+    # For sync context, we'll use a simple counter approach
+    import random
+    number = random.randint(1, 99999)
+    return f"05{number:05d}"
 
 async def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(security)):
     try:
@@ -208,7 +248,7 @@ async def root():
 
 @api_router.post("/register/passenger", response_model=dict)
 async def register_passenger(passenger_data: PassengerCreate):
-    # Generate a unique ID as phone for passengers
+    # Generate a unique phone number for passengers
     phone = f"PASS{datetime.now().strftime('%Y%m%d%H%M%S')}{secrets.randbelow(1000):03d}"
     
     # Hash password
@@ -216,17 +256,14 @@ async def register_passenger(passenger_data: PassengerCreate):
     
     # Create user
     user = User(
+        phone=phone,
         name=passenger_data.name,
         user_type="passenger",
         password_hash=hashed_password,
         age=passenger_data.age
     )
     
-    # Add phone field for login
-    user_dict = user.dict()
-    user_dict["phone"] = phone
-    
-    await db.users.insert_one(user_dict)
+    await db.users.insert_one(user.dict())
     
     # Create access token
     access_token_expires = timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
@@ -238,14 +275,15 @@ async def register_passenger(passenger_data: PassengerCreate):
         "access_token": access_token,
         "token_type": "bearer",
         "user": UserResponse(**user.dict()),
-        "phone": phone,
-        "message": "تم تسجيل الراكب بنجاح. احفظ رقم الهاتف للدخول لاحقاً"
+        "message": f"تم تسجيل الراكب بنجاح. رقم هاتفك للدخول: {phone}"
     }
 
 @api_router.post("/register/driver", response_model=dict)
 async def register_driver(driver_data: DriverCreate):
-    # Generate a unique ID as phone for drivers
-    phone = f"DRV{datetime.now().strftime('%Y%m%d%H%M%S')}{secrets.randbelow(1000):03d}"
+    # Check if phone number already exists
+    existing_phone = await db.users.find_one({"phone": driver_data.phone})
+    if existing_phone:
+        raise HTTPException(status_code=400, detail="رقم الهاتف مسجل من قبل")
     
     # Check if car registration or operating number already exists
     existing_car = await db.users.find_one({
@@ -257,11 +295,25 @@ async def register_driver(driver_data: DriverCreate):
     if existing_car:
         raise HTTPException(status_code=400, detail="رقم تسجيل السيارة أو رقم التشغيل مستخدم من قبل")
     
+    # Verify activation code
+    activation_code = await db.activation_codes.find_one({
+        "code": driver_data.activation_code,
+        "is_used": False
+    })
+    
+    if not activation_code:
+        raise HTTPException(status_code=404, detail="كود التفعيل غير صحيح أو مستخدم من قبل")
+    
+    # Check if code is expired
+    if datetime.utcnow() > activation_code["expires_at"]:
+        raise HTTPException(status_code=400, detail="كود التفعيل منتهي الصلاحية")
+    
     # Hash password
     hashed_password = hash_password(driver_data.password)
     
-    # Create user
+    # Create user (activated by default since code is provided)
     user = User(
+        phone=driver_data.phone,
         name=driver_data.name,
         user_type="driver",
         password_hash=hashed_password,
@@ -269,14 +321,18 @@ async def register_driver(driver_data: DriverCreate):
         operating_number=driver_data.operating_number,
         taxi_office_name=driver_data.taxi_office_name,
         taxi_office_phone=driver_data.taxi_office_phone,
-        is_activated=False
+        activation_code=driver_data.activation_code,
+        is_activated=True,
+        activation_expires=datetime.utcnow() + timedelta(days=30)
     )
     
-    # Add phone field for login
-    user_dict = user.dict()
-    user_dict["phone"] = phone
+    await db.users.insert_one(user.dict())
     
-    await db.users.insert_one(user_dict)
+    # Mark activation code as used
+    await db.activation_codes.update_one(
+        {"id": activation_code["id"]},
+        {"$set": {"is_used": True, "driver_phone": driver_data.phone}}
+    )
     
     # Create access token
     access_token_expires = timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
@@ -288,8 +344,7 @@ async def register_driver(driver_data: DriverCreate):
         "access_token": access_token,
         "token_type": "bearer",
         "user": UserResponse(**user.dict()),
-        "phone": phone,
-        "message": "تم تسجيل السائق بنجاح. تحتاج لكود تفعيل لبدء العمل. احفظ رقم الهاتف للدخول لاحقاً"
+        "message": "تم تسجيل السائق وتفعيل الحساب بنجاح!"
     }
 
 @api_router.post("/login", response_model=dict)
@@ -315,65 +370,46 @@ async def get_me(current_user: User = Depends(get_current_user)):
 
 @api_router.post("/admin/generate-codes/{count}")
 async def generate_activation_codes(count: int):
-    """Generate activation codes (admin endpoint)"""
+    """Generate activation codes in format 05XXXXX (admin endpoint)"""
     if count > 100:
         raise HTTPException(status_code=400, detail="Cannot generate more than 100 codes at once")
     
     codes = []
-    for _ in range(count):
-        code = generate_activation_code()
-        # Ensure code is unique
-        while await db.activation_codes.find_one({"code": code}):
-            code = generate_activation_code()
+    existing_codes = set()
+    
+    # Get existing codes to avoid duplicates
+    existing = await db.activation_codes.find({}, {"code": 1}).to_list(100000)
+    existing_codes = {doc["code"] for doc in existing}
+    
+    for i in range(count):
+        # Generate codes sequentially starting from unused numbers
+        code_found = False
+        for num in range(1, 100000):
+            code = f"05{num:05d}"
+            if code not in existing_codes:
+                existing_codes.add(code)
+                
+                activation_code = ActivationCode(
+                    code=code,
+                    expires_at=datetime.utcnow() + timedelta(days=30)
+                )
+                
+                await db.activation_codes.insert_one(activation_code.dict())
+                codes.append(code)
+                code_found = True
+                break
         
-        activation_code = ActivationCode(
-            code=code,
-            expires_at=datetime.utcnow() + timedelta(days=30)
-        )
-        
-        await db.activation_codes.insert_one(activation_code.dict())
-        codes.append(code)
+        if not code_found:
+            break
     
     return {"codes": codes, "count": len(codes), "expires_in_days": 30}
 
-@api_router.post("/driver/activate")
-async def activate_driver(request: ActivateDriverRequest, current_user: User = Depends(get_current_user)):
-    if current_user.user_type != "driver":
-        raise HTTPException(status_code=403, detail="Only drivers can use activation codes")
-    
-    # Find the activation code
-    activation_code = await db.activation_codes.find_one({
-        "code": request.activation_code,
-        "is_used": False
-    })
-    
-    if not activation_code:
-        raise HTTPException(status_code=404, detail="كود التفعيل غير صحيح أو مستخدم من قبل")
-    
-    # Check if code is expired
-    if datetime.utcnow() > activation_code["expires_at"]:
-        raise HTTPException(status_code=400, detail="كود التفعيل منتهي الصلاحية")
-    
-    # Mark code as used
-    await db.activation_codes.update_one(
-        {"id": activation_code["id"]},
-        {"$set": {"is_used": True, "driver_id": current_user.id}}
-    )
-    
-    # Activate driver
-    activation_expires = datetime.utcnow() + timedelta(days=30)
-    await db.users.update_one(
-        {"id": current_user.id},
-        {"$set": {
-            "is_activated": True,
-            "activation_code": request.activation_code,
-            "activation_expires": activation_expires
-        }}
-    )
-    
+@api_router.get("/customer-service-info")
+async def get_customer_service_info():
+    """Get customer service contact information"""
     return {
-        "message": "تم تفعيل حسابك بنجاح",
-        "expires_at": activation_expires
+        "phone": "0506511358",
+        "message": "للحصول على كود التفعيل، يرجى الاتصال بخدمة العملاء"
     }
 
 @api_router.post("/driver/location")
@@ -496,7 +532,7 @@ async def accept_ride(ride_id: str, current_user: User = Depends(get_current_use
         await manager.send_personal_message(json.dumps({
             "type": "ride_accepted",
             "driver_name": current_user.name,
-            "driver_phone": f"DRV{current_user.id[:8]}",
+            "driver_phone": current_user.phone,
             "car_registration": current_user.car_registration_number
         }), passenger_websocket)
     

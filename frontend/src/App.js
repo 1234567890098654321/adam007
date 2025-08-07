@@ -10,7 +10,7 @@ import { Badge } from './components/ui/badge';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from './components/ui/dialog';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from './components/ui/tabs';
 import { Alert, AlertDescription } from './components/ui/alert';
-import { Phone, MapPin, Car, User, LogOut, Navigation, Clock, Users, Package, CheckCircle, XCircle, AlertCircle } from 'lucide-react';
+import { Phone, MapPin, Car, User, LogOut, Navigation, Clock, Users, Package, CheckCircle, XCircle, AlertCircle, PhoneCall } from 'lucide-react';
 import './App.css';
 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
@@ -52,6 +52,7 @@ function App() {
   const [rides, setRides] = useState([]);
   const [isLoading, setIsLoading] = useState(false);
   const [alert, setAlert] = useState({ show: false, type: '', message: '' });
+  const [customerServiceInfo, setCustomerServiceInfo] = useState({ phone: '', message: '' });
 
   // Form states
   const [loginForm, setLoginForm] = useState({ phone: '', password: '' });
@@ -61,14 +62,15 @@ function App() {
     password: '' 
   });
   const [driverForm, setDriverForm] = useState({
+    phone: '',
     name: '',
     car_registration_number: '',
     operating_number: '',
     taxi_office_name: '',
     taxi_office_phone: '',
-    password: ''
+    password: '',
+    activation_code: ''
   });
-  const [activationCode, setActivationCode] = useState('');
   const [rideRequest, setRideRequest] = useState({
     pickup_address: '',
     destination_address: '',
@@ -106,6 +108,11 @@ function App() {
     }
   }, []);
 
+  // Fetch customer service info
+  useEffect(() => {
+    fetchCustomerServiceInfo();
+  }, []);
+
   // Fetch nearby taxis
   useEffect(() => {
     if (user && currentLocation) {
@@ -127,6 +134,15 @@ function App() {
     } catch (error) {
       localStorage.removeItem('token');
       delete axios.defaults.headers.common['Authorization'];
+    }
+  };
+
+  const fetchCustomerServiceInfo = async () => {
+    try {
+      const response = await axios.get(`${API}/customer-service-info`);
+      setCustomerServiceInfo(response.data);
+    } catch (error) {
+      console.error('Error fetching customer service info:', error);
     }
   };
 
@@ -171,7 +187,7 @@ function App() {
       axios.defaults.headers.common['Authorization'] = `Bearer ${response.data.access_token}`;
       setUser(response.data.user);
       setPassengerForm({ name: '', age: '', password: '' });
-      showAlert('success', `تم تسجيل الحساب بنجاح! رقم هاتفك: ${response.data.phone}`);
+      showAlert('success', response.data.message);
     } catch (error) {
       const message = error.response?.data?.detail || 'خطأ في التسجيل.';
       showAlert('error', message);
@@ -190,32 +206,12 @@ function App() {
       axios.defaults.headers.common['Authorization'] = `Bearer ${response.data.access_token}`;
       setUser(response.data.user);
       setDriverForm({
-        name: '', car_registration_number: '', operating_number: '',
-        taxi_office_name: '', taxi_office_phone: '', password: ''
+        phone: '', name: '', car_registration_number: '', operating_number: '',
+        taxi_office_name: '', taxi_office_phone: '', password: '', activation_code: ''
       });
-      showAlert('success', `تم تسجيل السائق بنجاح! رقم هاتفك: ${response.data.phone}. تحتاج لكود تفعيل للبدء.`);
+      showAlert('success', response.data.message);
     } catch (error) {
       const message = error.response?.data?.detail || 'خطأ في التسجيل.';
-      showAlert('error', message);
-    }
-    
-    setIsLoading(false);
-  };
-
-  const handleActivateDriver = async (e) => {
-    e.preventDefault();
-    setIsLoading(true);
-    
-    try {
-      const response = await axios.post(`${API}/driver/activate`, {
-        activation_code: activationCode
-      });
-      showAlert('success', 'تم تفعيل حسابك بنجاح!');
-      setActivationCode('');
-      // Refresh user data
-      await fetchUserProfile();
-    } catch (error) {
-      const message = error.response?.data?.detail || 'كود التفعيل غير صحيح.';
       showAlert('error', message);
     }
     
@@ -266,6 +262,12 @@ function App() {
     delete axios.defaults.headers.common['Authorization'];
     setUser(null);
     setNearbyTaxis([]);
+  };
+
+  const callCustomerService = () => {
+    if (customerServiceInfo.phone) {
+      window.open(`tel:${customerServiceInfo.phone}`, '_self');
+    }
   };
 
   // Update location for drivers automatically
@@ -375,6 +377,56 @@ function App() {
 
             <TabsContent value="driver">
               <form onSubmit={handleDriverRegister} className="space-y-4">
+                {/* Customer service contact */}
+                <div className="bg-blue-50 p-3 rounded-lg border border-blue-200">
+                  <div className="flex items-center justify-between mb-2">
+                    <h4 className="font-semibold text-blue-900 text-right">للحصول على كود التفعيل</h4>
+                    <PhoneCall className="w-4 h-4 text-blue-600" />
+                  </div>
+                  <p className="text-sm text-blue-800 text-right mb-2">
+                    {customerServiceInfo.message}
+                  </p>
+                  <Button 
+                    type="button"
+                    variant="outline" 
+                    size="sm"
+                    onClick={callCustomerService}
+                    className="w-full text-right"
+                  >
+                    <Phone className="w-4 h-4 ml-2" />
+                    اتصل بخدمة العملاء: {customerServiceInfo.phone}
+                  </Button>
+                </div>
+
+                <div>
+                  <Input
+                    type="tel"
+                    placeholder="رقم الهاتف (05xxxxxxxx)"
+                    value={driverForm.phone}
+                    onChange={(e) => setDriverForm({...driverForm, phone: e.target.value})}
+                    required
+                    pattern="^05\d{8}$"
+                    maxLength={10}
+                    className="text-right"
+                  />
+                </div>
+                
+                <div>
+                  <Input
+                    type="text"
+                    placeholder="كود التفعيل (05xxxxx)"
+                    value={driverForm.activation_code}
+                    onChange={(e) => setDriverForm({...driverForm, activation_code: e.target.value})}
+                    required
+                    pattern="^05\d{5}$"
+                    maxLength={7}
+                    className="text-center text-lg font-mono"
+                  />
+                  <p className="text-xs text-gray-600 mt-1 text-right">
+                    مثال: 0500001
+                  </p>
+                </div>
+
                 <div>
                   <Input
                     type="text"
@@ -608,47 +660,21 @@ function App() {
                   لوحة السائق
                 </h3>
                 
-                {!user.is_activated ? (
-                  <div className="space-y-4">
-                    <Alert className="border-yellow-500 bg-yellow-50">
-                      <AlertCircle className="w-4 h-4 text-yellow-600" />
-                      <AlertDescription className="text-yellow-800">
-                        تحتاج لكود تفعيل للبدء. سعر الكود 10 شواقل صالح لمدة 30 يوم
-                      </AlertDescription>
-                    </Alert>
-                    
-                    <form onSubmit={handleActivateDriver} className="space-y-3">
-                      <Input
-                        type="text"
-                        placeholder="كود التفعيل"
-                        value={activationCode}
-                        onChange={(e) => setActivationCode(e.target.value.toUpperCase())}
-                        required
-                        className="text-center text-lg font-mono"
-                        maxLength={8}
-                      />
-                      <Button type="submit" className="w-full" disabled={isLoading}>
-                        {isLoading ? 'جارٍ التفعيل...' : 'تفعيل الحساب'}
-                      </Button>
-                    </form>
+                <div className="space-y-4">
+                  <div className="text-center">
+                    <Badge variant="default" className="text-sm">
+                      متاح للعمل
+                    </Badge>
+                    <p className="text-sm text-gray-600 mt-2">
+                      يتم تحديث موقعك تلقائياً كل دقيقة
+                    </p>
                   </div>
-                ) : (
-                  <div className="space-y-4">
-                    <div className="text-center">
-                      <Badge variant="default" className="text-sm">
-                        متاح للعمل
-                      </Badge>
-                      <p className="text-sm text-gray-600 mt-2">
-                        يتم تحديث موقعك تلقائياً كل دقيقة
-                      </p>
-                    </div>
-                    
-                    <div className="bg-gray-50 p-3 rounded-lg text-center">
-                      <p className="text-sm text-gray-700 mb-2">انتظار طلبات الرحلات...</p>
-                      <Clock className="w-6 h-6 text-gray-400 mx-auto" />
-                    </div>
+                  
+                  <div className="bg-gray-50 p-3 rounded-lg text-center">
+                    <p className="text-sm text-gray-700 mb-2">انتظار طلبات الرحلات...</p>
+                    <Clock className="w-6 h-6 text-gray-400 mx-auto" />
                   </div>
-                )}
+                </div>
               </Card>
             )}
 
@@ -679,6 +705,10 @@ function App() {
                 </div>
               ) : (
                 <div className="space-y-3 text-right">
+                  <div className="flex justify-between">
+                    <span className="text-sm text-gray-600">رقم الهاتف</span>
+                    <span className="font-semibold text-xs">{user.phone}</span>
+                  </div>
                   <div className="flex justify-between">
                     <span className="text-sm text-gray-600">رقم التسجيل</span>
                     <span className="font-semibold text-xs">{user.car_registration_number}</span>
