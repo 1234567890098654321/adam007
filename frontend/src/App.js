@@ -9,7 +9,8 @@ import { Card } from './components/ui/card';
 import { Badge } from './components/ui/badge';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from './components/ui/dialog';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from './components/ui/tabs';
-import { Phone, MapPin, Car, User, LogOut, Navigation, Clock } from 'lucide-react';
+import { Alert, AlertDescription } from './components/ui/alert';
+import { Phone, MapPin, Car, User, LogOut, Navigation, Clock, Users, Package, CheckCircle, XCircle, AlertCircle } from 'lucide-react';
 import './App.css';
 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
@@ -47,20 +48,32 @@ function App() {
   const [currentLocation, setCurrentLocation] = useState(null);
   const [nearbyTaxis, setNearbyTaxis] = useState([]);
   const [activeTab, setActiveTab] = useState('login');
+  const [authMode, setAuthMode] = useState('login'); // 'login', 'passenger', 'driver'
   const [rides, setRides] = useState([]);
   const [isLoading, setIsLoading] = useState(false);
+  const [alert, setAlert] = useState({ show: false, type: '', message: '' });
 
   // Form states
   const [loginForm, setLoginForm] = useState({ phone: '', password: '' });
-  const [registerForm, setRegisterForm] = useState({ 
-    phone: '', 
-    password: '', 
+  const [passengerForm, setPassengerForm] = useState({ 
     name: '', 
-    user_type: 'passenger' 
+    age: '',
+    password: '' 
   });
+  const [driverForm, setDriverForm] = useState({
+    name: '',
+    car_registration_number: '',
+    operating_number: '',
+    taxi_office_name: '',
+    taxi_office_phone: '',
+    password: ''
+  });
+  const [activationCode, setActivationCode] = useState('');
   const [rideRequest, setRideRequest] = useState({
     pickup_address: '',
-    destination_address: ''
+    destination_address: '',
+    passenger_count: 1,
+    has_luggage: false
   });
 
   // Get current location
@@ -102,6 +115,11 @@ function App() {
     }
   }, [user, currentLocation]);
 
+  const showAlert = (type, message) => {
+    setAlert({ show: true, type, message });
+    setTimeout(() => setAlert({ show: false, type: '', message: '' }), 5000);
+  };
+
   const fetchUserProfile = async () => {
     try {
       const response = await axios.get(`${API}/me`);
@@ -135,32 +153,77 @@ function App() {
       axios.defaults.headers.common['Authorization'] = `Bearer ${response.data.access_token}`;
       setUser(response.data.user);
       setLoginForm({ phone: '', password: '' });
+      showAlert('success', 'تم تسجيل الدخول بنجاح');
     } catch (error) {
-      alert('خطأ في تسجيل الدخول. يرجى التحقق من رقم الهاتف وكلمة المرور.');
+      showAlert('error', 'خطأ في تسجيل الدخول. يرجى التحقق من رقم الهاتف وكلمة المرور.');
     }
     
     setIsLoading(false);
   };
 
-  const handleRegister = async (e) => {
+  const handlePassengerRegister = async (e) => {
     e.preventDefault();
     setIsLoading(true);
     
     try {
-      const response = await axios.post(`${API}/register`, registerForm);
+      const response = await axios.post(`${API}/register/passenger`, passengerForm);
       localStorage.setItem('token', response.data.access_token);
       axios.defaults.headers.common['Authorization'] = `Bearer ${response.data.access_token}`;
       setUser(response.data.user);
-      setRegisterForm({ phone: '', password: '', name: '', user_type: 'passenger' });
+      setPassengerForm({ name: '', age: '', password: '' });
+      showAlert('success', `تم تسجيل الحساب بنجاح! رقم هاتفك: ${response.data.phone}`);
     } catch (error) {
-      alert('خطأ في التسجيل. قد يكون رقم الهاتف مستخدم من قبل.');
+      const message = error.response?.data?.detail || 'خطأ في التسجيل.';
+      showAlert('error', message);
+    }
+    
+    setIsLoading(false);
+  };
+
+  const handleDriverRegister = async (e) => {
+    e.preventDefault();
+    setIsLoading(true);
+    
+    try {
+      const response = await axios.post(`${API}/register/driver`, driverForm);
+      localStorage.setItem('token', response.data.access_token);
+      axios.defaults.headers.common['Authorization'] = `Bearer ${response.data.access_token}`;
+      setUser(response.data.user);
+      setDriverForm({
+        name: '', car_registration_number: '', operating_number: '',
+        taxi_office_name: '', taxi_office_phone: '', password: ''
+      });
+      showAlert('success', `تم تسجيل السائق بنجاح! رقم هاتفك: ${response.data.phone}. تحتاج لكود تفعيل للبدء.`);
+    } catch (error) {
+      const message = error.response?.data?.detail || 'خطأ في التسجيل.';
+      showAlert('error', message);
+    }
+    
+    setIsLoading(false);
+  };
+
+  const handleActivateDriver = async (e) => {
+    e.preventDefault();
+    setIsLoading(true);
+    
+    try {
+      const response = await axios.post(`${API}/driver/activate`, {
+        activation_code: activationCode
+      });
+      showAlert('success', 'تم تفعيل حسابك بنجاح!');
+      setActivationCode('');
+      // Refresh user data
+      await fetchUserProfile();
+    } catch (error) {
+      const message = error.response?.data?.detail || 'كود التفعيل غير صحيح.';
+      showAlert('error', message);
     }
     
     setIsLoading(false);
   };
 
   const handleLocationUpdate = async () => {
-    if (!user || user.user_type !== 'driver' || !currentLocation) return;
+    if (!user || user.user_type !== 'driver' || !currentLocation || !user.is_activated) return;
     
     try {
       await axios.post(`${API}/driver/location`, {
@@ -169,6 +232,9 @@ function App() {
       });
     } catch (error) {
       console.error('Error updating location:', error);
+      if (error.response?.status === 403) {
+        showAlert('error', 'انتهت صلاحية التفعيل. يرجى تجديد الاشتراك.');
+      }
     }
   };
 
@@ -182,13 +248,15 @@ function App() {
         pickup_latitude: currentLocation.lat,
         pickup_longitude: currentLocation.lng,
         pickup_address: rideRequest.pickup_address || 'الموقع الحالي',
-        destination_address: rideRequest.destination_address
+        destination_address: rideRequest.destination_address,
+        passenger_count: parseInt(rideRequest.passenger_count),
+        has_luggage: rideRequest.has_luggage
       });
       
-      alert('تم إرسال طلب التاكسي بنجاح!');
-      setRideRequest({ pickup_address: '', destination_address: '' });
+      showAlert('success', 'تم إرسال طلب التاكسي بنجاح!');
+      setRideRequest({ pickup_address: '', destination_address: '', passenger_count: 1, has_luggage: false });
     } catch (error) {
-      alert('خطأ في إرسال الطلب. يرجى المحاولة مرة أخرى.');
+      showAlert('error', 'خطأ في إرسال الطلب. يرجى المحاولة مرة أخرى.');
     }
     setIsLoading(false);
   };
@@ -202,7 +270,7 @@ function App() {
 
   // Update location for drivers automatically
   useEffect(() => {
-    if (user && user.user_type === 'driver' && currentLocation) {
+    if (user && user.user_type === 'driver' && currentLocation && user.is_activated) {
       handleLocationUpdate();
       const interval = setInterval(handleLocationUpdate, 60000); // Every minute
       return () => clearInterval(interval);
@@ -212,6 +280,17 @@ function App() {
   if (!user) {
     return (
       <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 flex items-center justify-center p-4">
+        {alert.show && (
+          <Alert className={`fixed top-4 left-4 right-4 z-50 max-w-md mx-auto ${
+            alert.type === 'success' ? 'border-green-500 bg-green-50' : 'border-red-500 bg-red-50'
+          }`}>
+            {alert.type === 'success' ? <CheckCircle className="w-4 h-4 text-green-600" /> : <XCircle className="w-4 h-4 text-red-600" />}
+            <AlertDescription className={alert.type === 'success' ? 'text-green-800' : 'text-red-800'}>
+              {alert.message}
+            </AlertDescription>
+          </Alert>
+        )}
+
         <Card className="w-full max-w-md p-6 shadow-xl">
           <div className="text-center mb-6">
             <Car className="w-12 h-12 text-indigo-600 mx-auto mb-4" />
@@ -219,10 +298,11 @@ function App() {
             <p className="text-gray-600">اربط بين السائقين والركاب بسهولة</p>
           </div>
 
-          <Tabs value={activeTab} onValueChange={setActiveTab}>
-            <TabsList className="grid w-full grid-cols-2 mb-6">
+          <Tabs value={authMode} onValueChange={setAuthMode}>
+            <TabsList className="grid w-full grid-cols-3 mb-6">
               <TabsTrigger value="login">تسجيل الدخول</TabsTrigger>
-              <TabsTrigger value="register">حساب جديد</TabsTrigger>
+              <TabsTrigger value="passenger">راكب جديد</TabsTrigger>
+              <TabsTrigger value="driver">سائق جديد</TabsTrigger>
             </TabsList>
 
             <TabsContent value="login">
@@ -253,14 +333,84 @@ function App() {
               </form>
             </TabsContent>
 
-            <TabsContent value="register">
-              <form onSubmit={handleRegister} className="space-y-4">
+            <TabsContent value="passenger">
+              <form onSubmit={handlePassengerRegister} className="space-y-4">
                 <div>
                   <Input
                     type="text"
                     placeholder="الاسم الكامل"
-                    value={registerForm.name}
-                    onChange={(e) => setRegisterForm({...registerForm, name: e.target.value})}
+                    value={passengerForm.name}
+                    onChange={(e) => setPassengerForm({...passengerForm, name: e.target.value})}
+                    required
+                    className="text-right"
+                  />
+                </div>
+                <div>
+                  <Input
+                    type="number"
+                    placeholder="العمر (15 سنة أو أكثر)"
+                    value={passengerForm.age}
+                    onChange={(e) => setPassengerForm({...passengerForm, age: e.target.value})}
+                    required
+                    min="15"
+                    max="100"
+                    className="text-right"
+                  />
+                </div>
+                <div>
+                  <Input
+                    type="password"
+                    placeholder="كلمة المرور"
+                    value={passengerForm.password}
+                    onChange={(e) => setPassengerForm({...passengerForm, password: e.target.value})}
+                    required
+                    className="text-right"
+                  />
+                </div>
+                <Button type="submit" className="w-full" disabled={isLoading}>
+                  {isLoading ? 'جارٍ إنشاء الحساب...' : 'إنشاء حساب راكب'}
+                </Button>
+              </form>
+            </TabsContent>
+
+            <TabsContent value="driver">
+              <form onSubmit={handleDriverRegister} className="space-y-4">
+                <div>
+                  <Input
+                    type="text"
+                    placeholder="الاسم الثلاثي (حسب الرخصة)"
+                    value={driverForm.name}
+                    onChange={(e) => setDriverForm({...driverForm, name: e.target.value})}
+                    required
+                    className="text-right"
+                  />
+                </div>
+                <div>
+                  <Input
+                    type="text"
+                    placeholder="رقم تسجيل السيارة"
+                    value={driverForm.car_registration_number}
+                    onChange={(e) => setDriverForm({...driverForm, car_registration_number: e.target.value})}
+                    required
+                    className="text-right"
+                  />
+                </div>
+                <div>
+                  <Input
+                    type="text"
+                    placeholder="رقم التشغيل"
+                    value={driverForm.operating_number}
+                    onChange={(e) => setDriverForm({...driverForm, operating_number: e.target.value})}
+                    required
+                    className="text-right"
+                  />
+                </div>
+                <div>
+                  <Input
+                    type="text"
+                    placeholder="اسم مكتب التاكسي"
+                    value={driverForm.taxi_office_name}
+                    onChange={(e) => setDriverForm({...driverForm, taxi_office_name: e.target.value})}
                     required
                     className="text-right"
                   />
@@ -268,9 +418,9 @@ function App() {
                 <div>
                   <Input
                     type="tel"
-                    placeholder="رقم الهاتف"
-                    value={registerForm.phone}
-                    onChange={(e) => setRegisterForm({...registerForm, phone: e.target.value})}
+                    placeholder="رقم هاتف المكتب"
+                    value={driverForm.taxi_office_phone}
+                    onChange={(e) => setDriverForm({...driverForm, taxi_office_phone: e.target.value})}
                     required
                     className="text-right"
                   />
@@ -279,25 +429,14 @@ function App() {
                   <Input
                     type="password"
                     placeholder="كلمة المرور"
-                    value={registerForm.password}
-                    onChange={(e) => setRegisterForm({...registerForm, password: e.target.value})}
+                    value={driverForm.password}
+                    onChange={(e) => setDriverForm({...driverForm, password: e.target.value})}
                     required
                     className="text-right"
                   />
                 </div>
-                <div className="space-y-2">
-                  <label className="text-sm font-medium text-gray-700 block text-right">نوع الحساب</label>
-                  <select
-                    value={registerForm.user_type}
-                    onChange={(e) => setRegisterForm({...registerForm, user_type: e.target.value})}
-                    className="w-full p-2 border border-gray-300 rounded-md text-right"
-                  >
-                    <option value="passenger">راكب</option>
-                    <option value="driver">سائق</option>
-                  </select>
-                </div>
                 <Button type="submit" className="w-full" disabled={isLoading}>
-                  {isLoading ? 'جارٍ إنشاء الحساب...' : 'إنشاء حساب'}
+                  {isLoading ? 'جارٍ إنشاء الحساب...' : 'إنشاء حساب سائق'}
                 </Button>
               </form>
             </TabsContent>
@@ -309,6 +448,17 @@ function App() {
 
   return (
     <div className="min-h-screen bg-gray-50">
+      {alert.show && (
+        <Alert className={`fixed top-4 left-4 right-4 z-50 max-w-md mx-auto ${
+          alert.type === 'success' ? 'border-green-500 bg-green-50' : 'border-red-500 bg-red-50'
+        }`}>
+          {alert.type === 'success' ? <CheckCircle className="w-4 h-4 text-green-600" /> : <XCircle className="w-4 h-4 text-red-600" />}
+          <AlertDescription className={alert.type === 'success' ? 'text-green-800' : 'text-red-800'}>
+            {alert.message}
+          </AlertDescription>
+        </Alert>
+      )}
+
       {/* Header */}
       <header className="bg-white shadow-sm border-b">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
@@ -325,6 +475,11 @@ function App() {
                 <Badge variant={user.user_type === 'driver' ? 'default' : 'secondary'}>
                   {user.user_type === 'driver' ? 'سائق' : 'راكب'}
                 </Badge>
+                {user.user_type === 'driver' && (
+                  <Badge variant={user.is_activated ? 'default' : 'destructive'} className="text-xs">
+                    {user.is_activated ? 'مفعل' : 'غير مفعل'}
+                  </Badge>
+                )}
               </div>
               <Button variant="outline" size="sm" onClick={handleLogout}>
                 <LogOut className="w-4 h-4 ml-2" />
@@ -413,7 +568,34 @@ function App() {
                       className="text-right"
                     />
                   </div>
+                  <div className="flex space-x-2 space-x-reverse">
+                    <div className="flex-1">
+                      <label className="block text-sm font-medium mb-2 text-right">عدد الركاب</label>
+                      <select
+                        value={rideRequest.passenger_count}
+                        onChange={(e) => setRideRequest({...rideRequest, passenger_count: e.target.value})}
+                        className="w-full p-2 border border-gray-300 rounded-md text-right"
+                      >
+                        <option value="1">1</option>
+                        <option value="2">2</option>
+                        <option value="3">3</option>
+                        <option value="4">4</option>
+                      </select>
+                    </div>
+                    <div className="flex-1">
+                      <label className="block text-sm font-medium mb-2 text-right">الأمتعة</label>
+                      <select
+                        value={rideRequest.has_luggage}
+                        onChange={(e) => setRideRequest({...rideRequest, has_luggage: e.target.value === 'true'})}
+                        className="w-full p-2 border border-gray-300 rounded-md text-right"
+                      >
+                        <option value="false">بدون أمتعة</option>
+                        <option value="true">مع أمتعة</option>
+                      </select>
+                    </div>
+                  </div>
                   <Button type="submit" className="w-full" disabled={isLoading}>
+                    <Car className="w-4 h-4 ml-2" />
                     {isLoading ? 'جارٍ الطلب...' : 'طلب تاكسي'}
                   </Button>
                 </form>
@@ -426,28 +608,54 @@ function App() {
                   لوحة السائق
                 </h3>
                 
-                <div className="space-y-4">
-                  <div className="text-center">
-                    <Badge variant="default" className="text-sm">
-                      متاح للعمل
-                    </Badge>
-                    <p className="text-sm text-gray-600 mt-2">
-                      يتم تحديث موقعك تلقائياً كل دقيقة
-                    </p>
+                {!user.is_activated ? (
+                  <div className="space-y-4">
+                    <Alert className="border-yellow-500 bg-yellow-50">
+                      <AlertCircle className="w-4 h-4 text-yellow-600" />
+                      <AlertDescription className="text-yellow-800">
+                        تحتاج لكود تفعيل للبدء. سعر الكود 10 شواقل صالح لمدة 30 يوم
+                      </AlertDescription>
+                    </Alert>
+                    
+                    <form onSubmit={handleActivateDriver} className="space-y-3">
+                      <Input
+                        type="text"
+                        placeholder="كود التفعيل"
+                        value={activationCode}
+                        onChange={(e) => setActivationCode(e.target.value.toUpperCase())}
+                        required
+                        className="text-center text-lg font-mono"
+                        maxLength={8}
+                      />
+                      <Button type="submit" className="w-full" disabled={isLoading}>
+                        {isLoading ? 'جارٍ التفعيل...' : 'تفعيل الحساب'}
+                      </Button>
+                    </form>
                   </div>
-                  
-                  <div className="bg-gray-50 p-3 rounded-lg text-center">
-                    <p className="text-sm text-gray-700 mb-2">انتظار طلبات الرحلات...</p>
-                    <Clock className="w-6 h-6 text-gray-400 mx-auto" />
+                ) : (
+                  <div className="space-y-4">
+                    <div className="text-center">
+                      <Badge variant="default" className="text-sm">
+                        متاح للعمل
+                      </Badge>
+                      <p className="text-sm text-gray-600 mt-2">
+                        يتم تحديث موقعك تلقائياً كل دقيقة
+                      </p>
+                    </div>
+                    
+                    <div className="bg-gray-50 p-3 rounded-lg text-center">
+                      <p className="text-sm text-gray-700 mb-2">انتظار طلبات الرحلات...</p>
+                      <Clock className="w-6 h-6 text-gray-400 mx-auto" />
+                    </div>
                   </div>
-                </div>
+                )}
               </Card>
             )}
 
             {/* Nearby Taxis/Stats */}
             <Card className="p-4">
               <h3 className="text-lg font-semibold mb-4 text-right">
-                {user.user_type === 'passenger' ? 'التاكسيات القريبة' : 'إحصائيات اليوم'}
+                {user.user_type === 'passenger' ? 'التاكسيات القريبة' : 'معلومات السائق'}
               </h3>
               
               {user.user_type === 'passenger' ? (
@@ -472,17 +680,25 @@ function App() {
               ) : (
                 <div className="space-y-3 text-right">
                   <div className="flex justify-between">
-                    <span className="text-sm text-gray-600">الرحلات اليوم</span>
-                    <span className="font-semibold">0</span>
+                    <span className="text-sm text-gray-600">رقم التسجيل</span>
+                    <span className="font-semibold text-xs">{user.car_registration_number}</span>
                   </div>
                   <div className="flex justify-between">
-                    <span className="text-sm text-gray-600">الإيرادات</span>
-                    <span className="font-semibold">0 ريال</span>
+                    <span className="text-sm text-gray-600">رقم التشغيل</span>
+                    <span className="font-semibold text-xs">{user.operating_number}</span>
                   </div>
                   <div className="flex justify-between">
-                    <span className="text-sm text-gray-600">ساعات العمل</span>
-                    <span className="font-semibold">0:00</span>
+                    <span className="text-sm text-gray-600">مكتب التاكسي</span>
+                    <span className="font-semibold text-xs">{user.taxi_office_name}</span>
                   </div>
+                  {user.is_activated && user.activation_expires && (
+                    <div className="flex justify-between">
+                      <span className="text-sm text-gray-600">صالح حتى</span>
+                      <span className="font-semibold text-xs">
+                        {new Date(user.activation_expires).toLocaleDateString('ar-SA')}
+                      </span>
+                    </div>
+                  )}
                 </div>
               )}
             </Card>
