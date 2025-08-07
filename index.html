@@ -1,0 +1,122 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>الوو تكسي</title>
+  <style>
+    body {
+      font-family: sans-serif;
+      background-color: #f9f9f9;
+      direction: rtl;
+      padding: 20px;
+    }
+    .container {
+      max-width: 500px;
+      margin: auto;
+      background: white;
+      padding: 20px;
+      border-radius: 12px;
+      box-shadow: 0 0 15px rgba(0,0,0,0.1);
+    }
+    h1 {
+      text-align: center;
+      color: #4A00E0;
+    }
+    .subtitle {
+      text-align: center;
+      margin-bottom: 20px;
+      color: #555;
+    }
+    .tabs {
+      display: flex;
+      justify-content: space-around;
+      margin-bottom: 20px;
+    }
+    .tabs button {
+      padding: 10px;
+      flex: 1;
+      border: none;
+      background: #eee;
+      cursor: pointer;
+    }
+    .tabs .active {
+      background: #4A00E0;
+      color: white;
+    }
+    .card {
+      background: #f1f1f1;
+      padding: 10px;
+      border-radius: 8px;
+      margin-bottom: 20px;
+    }
+    input {
+      width: 100%;
+      padding: 10px;
+      margin-top: 8px;
+      margin-bottom: 16px;
+      border: 1px solid #ccc;
+      border-radius: 6px;
+    }
+    button.submit {
+      width: 100%;
+      padding: 12px;
+      background: #4A00E0;
+      color: white;
+      border: none;
+      font-size: 16px;
+      border-radius: 8px;
+      cursor: pointer;
+    }
+    .footer {
+      text-align: center;
+      margin-top: 30px;
+      color: #888;
+      font-size: 14px;
+    }
+    .link {
+      text-align: center;
+      margin-top: 10px;
+    }
+    .link a {
+      color: #4A00E0;
+      text-decoration: none;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>الوو تكسي</h1>
+    <p class="subtitle">اربط بين السائقين والركاب بسهولة</p>
+
+    <div class="tabs">
+      <button class="active">سائق جديد</button>
+      <button>راكب جديد</button>
+      <button>تسجيل الدخول</button>
+    </div>
+
+    <div class="card">
+      <p>للحصول على كود التفعيل، يرجى الاتصال بخدمة العملاء:</p>
+      <p>📞 <strong>0506111358</strong></p>
+    </div>
+
+    <form>
+      <input type="tel" placeholder="رقم الهاتف (05xxxxxxxx)" required>
+      <input type="text" placeholder="كود التفعيل (مثال: 0500001)" required>
+      <input type="text" placeholder="الاسم الثلاثي (حسب الرخصة)" required>
+      <input type="text" placeholder="رقم تسجيل السيارة" required>
+      <input type="number" placeholder="رقم التشغيل (6 أرقام)" required>
+      <input type="text" placeholder="اسم مكتب التاكسي" required>
+      <input type="text" placeholder="رقم تسجيل المكتب" required>
+      <input type="password" placeholder="كلمة المرور (حروف + رموز)" required>
+      <button type="submit" class="submit">تسجيل السائق</button>
+    </form>
+
+    <div class="link">
+      <p>هل لديك حساب؟ <a href="#">تسجيل الدخول</a></p>
+    </div>
+
+    <div class="footer">Made with Emergent - @cyber_assistant</div>
+  </div>
+</body>
+</html>
