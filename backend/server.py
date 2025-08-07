@@ -119,7 +119,7 @@ class DriverCreate(BaseModel):
     def validate_activation_code(cls, v):
         # التحقق من صيغة كود التفعيل: 05 + 5 أرقام من 00001 إلى 99999
         if not re.match(r'^05\d{5}$', v):
-            raise ValueError('كود التفعيل يجب أن يبدأ بـ 05 ويتكون من 10 أرقام')
+            raise ValueError('كود التفعيل يجب أن يبدأ بـ 05 ويتكون من 7 أرقام')
         
         # التحقق من أن الأرقام الـ5 الأخيرة في النطاق الصحيح
         last_five = v[2:]  # آخر 5 أرقام
@@ -204,28 +204,6 @@ def hash_password(password: str) -> str:
 def verify_password(plain_password: str, hashed_password: str) -> bool:
     return bcrypt.checkpw(plain_password.encode('utf-8'), hashed_password.encode('utf-8'))
 
-def generate_activation_code() -> str:
-    """Generate activation code in format: 05XXXXX where XXXXX is 00001-99999"""
-    # Get the highest used number
-    import asyncio
-    
-    async def get_next_number():
-        # Find the highest used code
-        codes = await db.activation_codes.find().sort("code", -1).to_list(1)
-        if not codes:
-            return 1
-        
-        last_code = codes[0]["code"]
-        if last_code.startswith("05"):
-            last_number = int(last_code[2:])
-            return min(last_number + 1, 99999)
-        return 1
-    
-    # For sync context, we'll use a simple counter approach
-    import random
-    number = random.randint(1, 99999)
-    return f"05{number:05d}"
-
 async def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(security)):
     try:
         payload = jwt.decode(credentials.credentials, SECRET_KEY, algorithms=[ALGORITHM])
@@ -295,7 +273,7 @@ async def register_driver(driver_data: DriverCreate):
     if existing_car:
         raise HTTPException(status_code=400, detail="رقم تسجيل السيارة أو رقم التشغيل مستخدم من قبل")
     
-    # Verify activation code
+    # Verify activation code (check in database only - no codes displayed)
     activation_code = await db.activation_codes.find_one({
         "code": driver_data.activation_code,
         "is_used": False
@@ -367,42 +345,6 @@ async def login(user_data: UserLogin):
 @api_router.get("/me", response_model=UserResponse)
 async def get_me(current_user: User = Depends(get_current_user)):
     return UserResponse(**current_user.dict())
-
-@api_router.post("/admin/generate-codes/{count}")
-async def generate_activation_codes(count: int):
-    """Generate activation codes in format 05XXXXX (admin endpoint)"""
-    if count > 100:
-        raise HTTPException(status_code=400, detail="Cannot generate more than 100 codes at once")
-    
-    codes = []
-    existing_codes = set()
-    
-    # Get existing codes to avoid duplicates
-    existing = await db.activation_codes.find({}, {"code": 1}).to_list(100000)
-    existing_codes = {doc["code"] for doc in existing}
-    
-    for i in range(count):
-        # Generate codes sequentially starting from unused numbers
-        code_found = False
-        for num in range(1, 100000):
-            code = f"05{num:05d}"
-            if code not in existing_codes:
-                existing_codes.add(code)
-                
-                activation_code = ActivationCode(
-                    code=code,
-                    expires_at=datetime.utcnow() + timedelta(days=30)
-                )
-                
-                await db.activation_codes.insert_one(activation_code.dict())
-                codes.append(code)
-                code_found = True
-                break
-        
-        if not code_found:
-            break
-    
-    return {"codes": codes, "count": len(codes), "expires_in_days": 30}
 
 @api_router.get("/customer-service-info")
 async def get_customer_service_info():
